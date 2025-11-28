@@ -177,9 +177,10 @@
             try {
                 const data = localStorage.getItem(LOCAL_STORAGE_KEY);
                 ingredientsData = data ? JSON.parse(data) : [];
+                console.log("Local Storage loaded successfully. Items:", ingredientsData.length); // Debug log
             } catch (error) {
                 console.error("Error loading data from Local Storage:", error);
-                ingredientsData = []; // Load empty data if error occurs
+                ingredientsData = []; 
             }
             renderIngredients(); // 載入後立即渲染
         }
@@ -193,7 +194,6 @@
                 renderIngredients(); // 保存後重新渲染清單
             } catch (error) {
                 console.error("Error saving data to Local Storage:", error);
-                // 可以在這裡顯示一個錯誤提示給用戶
             }
         }
         
@@ -545,8 +545,8 @@
             }
         });
 
-        // --- 應用程式啟動設定 ---
-        window.addEventListener('load', () => {
+        // --- 應用程式啟動設定 (使用 DOMContentLoaded 確保 DOM 準備就緒) ---
+        document.addEventListener('DOMContentLoaded', () => {
             const today = new Date().toISOString().split('T')[0];
             
             // 設定今日日期為預設值並限制最大日期
