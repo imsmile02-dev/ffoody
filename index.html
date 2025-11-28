@@ -41,11 +41,11 @@
     <div class="max-w-6xl mx-auto pb-20"> 
         <!-- 標題與協作資訊 -->
         <header class="mb-8 border-b pb-4">
-            <h1 class="text-4xl font-extrabold text-primary mb-2 tracking-tight">食材新鮮度追蹤 (協作版)</h1>
+            <h1 class="text-4xl font-extrabold text-primary mb-2 tracking-tight">食材新鮮度追蹤</h1>
             <div class="flex flex-wrap items-center text-sm text-gray-500">
-                <p class="mr-4">狀態: <span id="auth-status" class="font-semibold text-secondary">載入中...</span></p>
-                <!-- 顯示完整的 User ID for collaboration -->
-                <p class="truncate">您的 ID: <code id="user-id-display" class="font-mono text-gray-700 bg-gray-100 p-1 rounded">載入中...</code></p>
+                <p class="mr-4">狀態: <span id="auth-status" class="font-semibold text-orange-500">離線模式 (Local Storage)</span></p>
+                <!-- 顯示 Local Storage 狀態 -->
+                <p class="truncate">您的 ID: <code id="user-id-display" class="font-mono text-gray-700 bg-gray-100 p-1 rounded">Local Browser Storage</code></p>
             </div>
         </header>
 
@@ -131,7 +131,7 @@
         
         <div id="ingredient-list" class="grid grid-cols-1 gap-4">
             <p id="empty-state" class="text-center text-gray-500 py-8 italic hidden">目前沒有任何食材。請新增！</p>
-            <p id="loading-state" class="text-center text-gray-500 py-8 italic font-semibold animate-pulse">連線中... 正在載入您的雲端庫存資料。</p>
+            <p id="loading-state" class="text-center text-gray-500 py-8 italic font-semibold animate-pulse">正在載入本地庫存資料...</p>
         </div>
 
     </div>
@@ -148,19 +148,8 @@
         </div>
     </div>
 
-    <!-- 腳本區塊 (整合 Firebase 與所有應用程式邏輯) -->
+    <!-- 腳本區塊 (整合應用程式邏輯與 Local Storage) -->
     <script type="module">
-        // --- 引入 Firebase SDK ---
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // --- 全域變數定義 (來自 Canvas 環境) ---
-        // 為了在 GitHub Pages 上也能運作，我們使用 'default-app-id' 和空配置作為回退值
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
         // --- DOM 元素引用 ---
         const freshForm = document.getElementById('fresh-ingredient-form');
         const packagedForm = document.getElementById('packaged-ingredient-form');
@@ -174,22 +163,41 @@
         const modalCancelBtn = document.getElementById('modal-cancel-btn');
 
         // --- 應用程式狀態 ---
-        let db = null;
-        let auth = null;
-        let userId = 'loading...'; 
         let ingredientsData = []; 
         let showUsedItems = false; 
         let pendingDeleteId = null; 
+        const LOCAL_STORAGE_KEY = 'foodTrackerData';
 
-        // --- 工具函數 ---
-        
+        // --- Local Storage 數據處理 ---
+
         /**
-         * 獲取 Firestore 公共協作集合的路徑
+         * 從瀏覽器的 Local Storage 載入數據
          */
-        function getCollectionPath() {
-            // 使用公共路徑，允許多人協作追蹤同一個「冰箱」
-            return `artifacts/${appId}/public/data/ingredients`; 
+        function loadFromLocalStorage() {
+            try {
+                const data = localStorage.getItem(LOCAL_STORAGE_KEY);
+                ingredientsData = data ? JSON.parse(data) : [];
+            } catch (error) {
+                console.error("Error loading data from Local Storage:", error);
+                ingredientsData = []; // Load empty data if error occurs
+            }
+            renderIngredients(); // 載入後立即渲染
         }
+
+        /**
+         * 將當前數據保存到瀏覽器的 Local Storage
+         */
+        function saveToLocalStorage() {
+            try {
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(ingredientsData));
+                renderIngredients(); // 保存後重新渲染清單
+            } catch (error) {
+                console.error("Error saving data to Local Storage:", error);
+                // 可以在這裡顯示一個錯誤提示給用戶
+            }
+        }
+        
+        // --- 工具函數 (保持不變) ---
 
         /**
          * 根據到期日計算狀態
@@ -204,7 +212,7 @@
             const diffTime = expiryDate.getTime() - today.getTime();
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            let color = 'bg-secondary text-white'; // Default: Good (green)
+            let color = 'bg-secondary text-white'; 
             let warningText = `剩餘 ${diffDays} 天`;
             let ringColor = 'ring-secondary';
 
@@ -240,93 +248,23 @@
         }
         
         /**
-         * 獲取位置的排序優先級 (優先處理需盡快使用的食材)
+         * 獲取位置的排序優先級
          */
         function getLocationPriority(locationKey) {
             switch (locationKey) {
-                case 'refrigerated': return 1; // 冷藏 (最容易變質，優先使用)
-                case 'room': return 2;       // 常溫
-                case 'frozen': return 3;     // 冷凍 (保存最久)
+                case 'refrigerated': return 1; 
+                case 'room': return 2;       
+                case 'frozen': return 3;     
                 default: return 4; 
             }
         }
 
-        // --- Firebase 核心初始化 ---
-
-        async function initializeFirebaseAndAuth() {
-            // 檢查是否提供了有效的 API Key，如果沒有，則跳過 Firebase 初始化
-            if (!firebaseConfig || !firebaseConfig.apiKey) {
-                document.getElementById('auth-status').textContent = '未連線 (請檢查配置)';
-                document.getElementById('loading-state').textContent = '無法連線至雲端資料庫。';
-                console.error("Firebase configuration is missing or invalid. Skipping Firestore initialization.");
-                
-                // 模擬空數據並顯示空狀態
-                ingredientsData = [];
-                renderIngredients();
-                return;
-            }
-
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                setLogLevel('error'); 
-
-                // 根據環境提供的 token 進行登入
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-            } catch (error) {
-                console.error("Firebase initialization or authentication failed:", error);
-                document.getElementById('auth-status').textContent = '連線失敗';
-                document.getElementById('loading-state').textContent = '連線失敗：請檢查網路或配置。';
-            }
-            
-            // 監聽身份驗證狀態，並在成功後啟動資料監聽
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    userId = user.uid;
-                    document.getElementById('user-id-display').textContent = userId;
-                    document.getElementById('auth-status').textContent = '已連線';
-                    setupRealtimeListener(); 
-                } else {
-                    // Fallback if auth fails completely
-                    userId = 'anonymous-user'; 
-                    document.getElementById('user-id-display').textContent = userId;
-                    document.getElementById('auth-status').textContent = '匿名模式';
-                    setupRealtimeListener(); // 嘗試在匿名模式下載入數據 (如果安全規則允許)
-                }
-            });
-        }
-        
-        // --- Firestore 實時監聽 ---
-        function setupRealtimeListener() {
-            if (!db) return;
-
-            const ingredientsCol = collection(db, getCollectionPath());
-            const q = query(ingredientsCol); 
-
-            onSnapshot(q, (snapshot) => {
-                ingredientsData = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                // 收到新資料後重新渲染清單
-                renderIngredients();
-            }, (error) => {
-                console.error("Error setting up real-time listener: ", error);
-            });
-        }
-
-        // --- 渲染邏輯 ---
+        // --- 渲染邏輯 (保持不變) ---
         function renderIngredients() {
             const displayIngredients = [...ingredientsData]
-                .filter(item => showUsedItems || !item.isUsed); // 篩選已使用的項目
+                .filter(item => showUsedItems || !item.isUsed); 
 
-            // 排序: 1. 按儲存位置優先級 (冷藏 > 常溫 > 冷凍), 2. 按到期日 (越近越前)
+            // 排序: 1. 按儲存位置優先級, 2. 按到期日 (越近越前)
             displayIngredients.sort((a, b) => {
                 const priorityA = getLocationPriority(a.location || 'room');
                 const priorityB = getLocationPriority(b.location || 'room');
@@ -341,7 +279,7 @@
             });
 
             listContainer.innerHTML = '';
-            loadingState.classList.add('hidden'); // 隱藏載入狀態
+            loadingState.classList.add('hidden'); 
 
             if (displayIngredients.length === 0) {
                 emptyState.classList.remove('hidden');
@@ -373,7 +311,7 @@
                 const quantityDisplayHtml = `
                     <div class="flex items-center text-sm text-gray-600 mt-1">
                         <span class="mr-2">數量:</span>
-                        <!-- 數量輸入框，綁定 Firestore 更新 -->
+                        <!-- 數量輸入框，綁定 Local Storage 更新 -->
                         <input type="text" 
                             value="${item.quantity}" 
                             data-id="${item.id}"
@@ -407,8 +345,7 @@
                             <!-- 標記為使用/未使用 切換按鈕 -->
                             <button data-action="toggle-used" data-id="${item.id}"
                                 class="p-3 rounded-full text-white transition duration-150 shadow-md text-sm font-semibold ${actionColor}"
-                                title="${actionText}"
-                                ${db ? '' : 'disabled'}>
+                                title="${actionText}">
                                 <!-- Lucide Icon: Check/Refresh -->
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     ${isItemUsed ? 
@@ -421,8 +358,7 @@
                             <!-- 刪除按鈕 -->
                             <button data-action="delete" data-id="${item.id}"
                                 class="p-3 rounded-full bg-red-500 text-white hover:bg-red-600 transition duration-150 shadow-md"
-                                title="永久刪除此項目"
-                                ${db ? '' : 'disabled'}>
+                                title="永久刪除此項目">
                                 <!-- Lucide Icon: Trash -->
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
@@ -435,57 +371,63 @@
             });
         }
 
-        // --- 資料庫操作函數 ---
+        // --- Local Mode 數據操作函數 ---
 
         /**
-         * 處理表單提交並將資料儲存到 Firestore
+         * 處理表單提交並將資料儲存到 Local Storage
          */
-        async function saveNewIngredient(ingredientData, formId, inventoryDateId) {
-            if (!db) {
-                console.error("Firestore is not initialized. Cannot save data.");
-                return;
-            }
-
+        function saveNewIngredientLocal(ingredientData, formId, inventoryDateId) {
             const newIngredient = {
                 ...ingredientData,
+                id: Date.now().toString(), // 賦予一個唯一的ID
                 isUsed: false,
-                userId: userId, 
-                createdAt: new Date().toISOString(),
             };
 
-            try {
-                await addDoc(collection(db, getCollectionPath()), newIngredient);
+            ingredientsData.push(newIngredient);
+            saveToLocalStorage(); // 保存到 Local Storage
 
-                document.getElementById(formId).reset();
-                // 重設日期為今日
-                const today = new Date().toISOString().split('T')[0];
-                document.getElementById(inventoryDateId).value = today;
-                
-            } catch (e) {
-                console.error("Error adding document: ", e);
-            }
+            // 重設表單
+            document.getElementById(formId).reset();
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById(inventoryDateId).value = today;
         }
         
         /**
          * 處理數量欄位失焦 (onblur) 進行更新
          */
-        async function handleQuantityChange(inputElement) {
+        function handleQuantityChange(inputElement) {
             const id = inputElement.dataset.id;
             const newQuantity = inputElement.value.trim();
 
-            if (!id || !db || !newQuantity) {
+            if (!id || !newQuantity) {
                 renderIngredients(); // Revert if data is bad
                 return;
             }
 
-            try {
-                const docRef = doc(db, getCollectionPath(), id);
-                await updateDoc(docRef, {
-                    quantity: newQuantity,
-                });
-            } catch (e) {
-                console.error("Error updating quantity: ", e);
+            const itemIndex = ingredientsData.findIndex(item => item.id === id);
+            if (itemIndex > -1) {
+                ingredientsData[itemIndex].quantity = newQuantity;
+                saveToLocalStorage();
             }
+        }
+        
+        /**
+         * 切換項目的使用狀態
+         */
+        function toggleUsedStatusLocal(id) {
+            const itemIndex = ingredientsData.findIndex(item => item.id === id);
+            if (itemIndex > -1) {
+                ingredientsData[itemIndex].isUsed = !ingredientsData[itemIndex].isUsed;
+                saveToLocalStorage();
+            }
+        }
+        
+        /**
+         * 刪除指定項目
+         */
+        function deleteIngredientLocal(id) {
+            ingredientsData = ingredientsData.filter(item => item.id !== id);
+            saveToLocalStorage();
         }
 
         // --- 彈窗邏輯 ---
@@ -500,21 +442,15 @@
             pendingDeleteId = null;
         }
         
-        async function deleteConfirmed() {
-            if (!pendingDeleteId || !db) {
+        function deleteConfirmed() {
+            if (!pendingDeleteId) {
                 hideConfirmModal();
                 return;
             }
             
             const id = pendingDeleteId;
             hideConfirmModal();
-
-            try {
-                const docRef = doc(db, getCollectionPath(), id);
-                await deleteDoc(docRef);
-            } catch (e) {
-                console.error("Error deleting document: ", e);
-            }
+            deleteIngredientLocal(id);
         }
         
         // 綁定 Modal 按鈕事件
@@ -524,9 +460,8 @@
         // --- 事件監聽器 (Forms & Actions) ---
 
         // 處理生鮮食材表單提交
-        freshForm.addEventListener('submit', async (e) => {
+        freshForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            if (!db) return; // 只有在 Firebase 連線成功時才允許提交
             
             const name = document.getElementById('fresh-name').value.trim();
             const quantity = document.getElementById('fresh-quantity').value.trim();
@@ -542,13 +477,12 @@
             const expiryDate = invDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
             const data = { name, quantity, location, inventoryDate, storageDays, expiryDate };
-            await saveNewIngredient(data, 'fresh-ingredient-form', 'fresh-inventoryDate');
+            saveNewIngredientLocal(data, 'fresh-ingredient-form', 'fresh-inventoryDate');
         });
 
         // 處理包裝食材表單提交
-        packagedForm.addEventListener('submit', async (e) => {
+        packagedForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            if (!db) return; // 只有在 Firebase 連線成功時才允許提交
             
             const name = document.getElementById('pkg-name').value.trim();
             const quantity = document.getElementById('pkg-quantity').value.trim();
@@ -565,7 +499,7 @@
             const storageDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
             
             const data = { name, quantity, location, inventoryDate, storageDays, expiryDate };
-            await saveNewIngredient(data, 'packaged-ingredient-form', 'pkg-inventoryDate');
+            saveNewIngredientLocal(data, 'packaged-ingredient-form', 'pkg-inventoryDate');
         });
         
         // 處理顯示/隱藏已使用項目按鈕
@@ -581,7 +515,7 @@
             renderIngredients();
         });
 
-        // 動態元素事件監聽 (事件代理)
+        // 動態元素事件監聽 (數量輸入框失焦時更新)
         listContainer.addEventListener('blur', (e) => {
             const input = e.target.closest('.quantity-input');
             // 檢查是否為數量輸入框且未被禁用
@@ -591,9 +525,9 @@
         }, true); 
 
         // 卡片按鈕點擊事件 (Toggle used/Delete)
-        listContainer.addEventListener('click', async (e) => {
+        listContainer.addEventListener('click', (e) => {
             const button = e.target.closest('button[data-action]');
-            if (!button || !db) return; // 連線失敗時禁用按鈕
+            if (!button) return; 
 
             const action = button.dataset.action;
             const id = button.dataset.id;
@@ -601,21 +535,13 @@
 
             if (!id || !item) return;
 
-            try {
-                const docRef = doc(db, getCollectionPath(), id);
-
-                switch (action) {
-                    case 'toggle-used':
-                        await updateDoc(docRef, {
-                            isUsed: !item.isUsed,
-                        });
-                        break;
-                    case 'delete':
-                        showConfirmModal(id, item.name);
-                        break;
-                }
-            } catch (error) {
-                console.error("Error handling card action:", error);
+            switch (action) {
+                case 'toggle-used':
+                    toggleUsedStatusLocal(id);
+                    break;
+                case 'delete':
+                    showConfirmModal(id, item.name);
+                    break;
             }
         });
 
@@ -632,7 +558,8 @@
             // 包裝食材有效期限不能早於今天
             document.getElementById('pkg-expiryDateInput').setAttribute('min', today);
 
-            initializeFirebaseAndAuth();
+            // 啟動應用程式邏輯，載入 Local Storage 數據
+            loadFromLocalStorage();
         });
     </script>
 </body>
