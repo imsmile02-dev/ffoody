@@ -148,8 +148,8 @@
         </div>
     </div>
 
-    <!-- 腳本區塊 (整合應用程式邏輯與 Local Storage) -->
-    <script type="module">
+    <!-- 腳本區塊 (已移除 type="module" 以避免 Firebase 錯誤) -->
+    <script>
         // --- DOM 元素引用 ---
         const freshForm = document.getElementById('fresh-ingredient-form');
         const packagedForm = document.getElementById('packaged-ingredient-form');
@@ -177,12 +177,10 @@
             try {
                 const data = localStorage.getItem(LOCAL_STORAGE_KEY);
                 ingredientsData = data ? JSON.parse(data) : [];
-                console.log("Local Storage loaded successfully. Items:", ingredientsData.length); // Debug log
             } catch (error) {
                 console.error("Error loading data from Local Storage:", error);
                 ingredientsData = []; 
             }
-            renderIngredients(); // 載入後立即渲染
         }
 
         /**
@@ -197,7 +195,7 @@
             }
         }
         
-        // --- 工具函數 (保持不變) ---
+        // --- 工具函數 ---
 
         /**
          * 根據到期日計算狀態
@@ -259,7 +257,7 @@
             }
         }
 
-        // --- 渲染邏輯 (保持不變) ---
+        // --- 渲染邏輯 ---
         function renderIngredients() {
             const displayIngredients = [...ingredientsData]
                 .filter(item => showUsedItems || !item.isUsed); 
@@ -388,8 +386,7 @@
 
             // 重設表單
             document.getElementById(formId).reset();
-            const today = new Date().toISOString().split('T')[0];
-            document.getElementById(inventoryDateId).value = today;
+            setInitialDates(); // 重新設定今日日期
         }
         
         /**
@@ -456,6 +453,33 @@
         // 綁定 Modal 按鈕事件
         modalCancelBtn.addEventListener('click', hideConfirmModal);
         modalDeleteBtn.addEventListener('click', deleteConfirmed);
+
+        // --- 初始化函數 ---
+
+        /**
+         * 設定日期輸入框的初始值和限制
+         */
+        function setInitialDates() {
+             const today = new Date().toISOString().split('T')[0];
+            
+            // 設定今日日期為預設值並限制最大日期 (入庫日期不能超過今天)
+            document.getElementById('fresh-inventoryDate').value = today;
+            document.getElementById('fresh-inventoryDate').setAttribute('max', today); 
+            document.getElementById('pkg-inventoryDate').value = today;
+            document.getElementById('pkg-inventoryDate').setAttribute('max', today);
+
+            // 包裝食材有效期限不能早於今天
+            document.getElementById('pkg-expiryDateInput').setAttribute('min', today);
+        }
+
+        /**
+         * 應用程式啟動主函數
+         */
+        function initApp() {
+            setInitialDates(); // 1. 設定日期輸入框
+            loadFromLocalStorage(); // 2. 載入數據
+            renderIngredients(); // 3. 渲染清單
+        }
 
         // --- 事件監聽器 (Forms & Actions) ---
 
@@ -545,22 +569,8 @@
             }
         });
 
-        // --- 應用程式啟動設定 (使用 DOMContentLoaded 確保 DOM 準備就緒) ---
-        document.addEventListener('DOMContentLoaded', () => {
-            const today = new Date().toISOString().split('T')[0];
-            
-            // 設定今日日期為預設值並限制最大日期
-            document.getElementById('fresh-inventoryDate').value = today;
-            document.getElementById('fresh-inventoryDate').setAttribute('max', today); 
-            document.getElementById('pkg-inventoryDate').value = today;
-            document.getElementById('pkg-inventoryDate').setAttribute('max', today);
-
-            // 包裝食材有效期限不能早於今天
-            document.getElementById('pkg-expiryDateInput').setAttribute('min', today);
-
-            // 啟動應用程式邏輯，載入 Local Storage 數據
-            loadFromLocalStorage();
-        });
+        // --- 應用程式啟動 (使用 DOMContentLoaded 確保 DOM 準備就緒) ---
+        document.addEventListener('DOMContentLoaded', initApp);
     </script>
 </body>
 </html>
